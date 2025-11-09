@@ -1,0 +1,8 @@
+server:
+  port: 8080
+
+janus:
+  url: localhost
+  ws-port: 8188
+  ws-ssl: false
+  log: true

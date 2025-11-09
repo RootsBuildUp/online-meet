@@ -1,0 +1,11 @@
+#COMMON PROFILE
+spring:
+  messages:
+    encoding: UTF-8
+  profiles:
+    active: local
+  application:
+    name: Online-meet
+  banner:
+    charset: UTF-8
+    location: banner.txt

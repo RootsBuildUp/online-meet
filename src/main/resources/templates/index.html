@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>Multi-User Video Room</title>
+    <script src="/webjars/sockjs-client/1.5.2/dist/sockjs.min.js"></script>
+    <script src="/webjars/stomp-websocket/2.3.4/stomp.min.js"></script>
+    <style>
+        video { width: 320px; height: 240px; margin: 8px; background: black; }
+        #videos { display: flex; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+<h1>Multi-User Video Room</h1>
+<label>Room ID: <input id="roomId" value=""></label>
+<label>User ID: <input id="userId" value=""></label>
+<button onclick="joinRoom()">Join Room</button>
+<div id="videos"></div>
+
+<script>
+    let stompClient;
+    let localPc;
+    let localStream;
+    const videos = document.getElementById('videos');
+    const feeds = {}; // displayName -> RTCPeerConnection
+
+    async function joinRoom() {
+        const roomId = document.getElementById('roomId').value.trim();
+        const userId = document.getElementById('userId').value.trim();
+        if (!roomId || !userId) { alert('Please enter Room ID and User ID'); return; }
+
+        try {
+            // Check available devices
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const hasVideo = devices.some(d => d.kind === 'videoinput');
+            const hasAudio = devices.some(d => d.kind === 'audioinput');
+
+            if (!hasVideo && !hasAudio) {
+                alert("No camera or microphone found on this device.");
+                return;
+            }
+
+            // Get user media safely
+            localStream = await navigator.mediaDevices.getUserMedia({
+                video: hasVideo,
+                audio: hasAudio
+            });
+
+            addVideo(localStream, userId);
+
+        } catch (err) {
+            console.error("Error accessing media devices:", err);
+            alert("Could not access camera/microphone. Please check permissions.");
+            return;
+        }
+
+        // Connect STOMP websocket
+        const socket = new SockJS('/ws');
+        stompClient = Stomp.over(socket);
+        stompClient.connect({}, frame => {
+            console.log('Connected: ' + frame);
+
+            // Listen to server events / Janus SDP answers
+            stompClient.subscribe('/topic/notify-received', async msg => {
+                const body = JSON.parse(msg.body);
+
+                if (body.jsep) {
+                    // For own published stream
+                    if (body.display === userId) {
+                        if (localPc) {
+                            await localPc.setRemoteDescription({type: body.jsep.type, sdp: body.jsep.sdp});
+                            console.log('Remote description set for publisher', userId);
+                        }
+                    } else {
+                        // For other participants (subscribe)
+                        if (!feeds[body.display]) {
+                            const pc = new RTCPeerConnection();
+                            pc.ontrack = event => addVideo(event.streams[0], body.display);
+                            await pc.setRemoteDescription({type: body.jsep.type, sdp: body.jsep.sdp});
+                            feeds[body.display] = pc;
+                        } else {
+                            try {
+                                await feeds[body.display].setRemoteDescription({type: body.jsep.type, sdp: body.jsep.sdp});
+                            } catch (e) { console.warn(e); }
+                        }
+                    }
+                    return;
+                }
+
+                // Handle other events like new publishers
+                if (body.event === 'publisher-added') {
+                    console.log('New publisher(s) added', body.publishers);
+                }
+            });
+        });
+
+        // Create local peer connection to publish stream
+        localPc = new RTCPeerConnection();
+        localStream.getTracks().forEach(track => localPc.addTrack(track, localStream));
+
+        // Optional: log local ICE candidates
+        localPc.onicecandidate = e => {
+            if (e.candidate) {
+                console.log('Local ICE candidate', e.candidate);
+                // Send to server if using trickle ICE
+            }
+        };
+
+        // Create offer
+        const offer = await localPc.createOffer();
+        await localPc.setLocalDescription(offer);
+        console.log('Sending offer to server...', offer.sdp ? offer.sdp.substring(0, 120) + '...' : '');
+
+        // Send SDP to server
+        stompClient.send("/app/notify-send", {}, JSON.stringify({
+            roomId: roomId,
+            displayName: userId,
+            sdpOffer: offer.sdp
+        }));
+    }
+
+    function addVideo(stream, id) {
+        let video = document.getElementById(id);
+        if (!video) {
+            video = document.createElement('video');
+            video.id = id;
+            video.autoplay = true;
+            video.playsInline = true;
+            videos.appendChild(video);
+        }
+        video.srcObject = stream;
+    }
+</script>
+</body>
+</html>
