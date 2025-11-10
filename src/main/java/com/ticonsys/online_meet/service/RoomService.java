@@ -3,14 +3,16 @@ package com.ticonsys.online_meet.service;
 import com.ticonsys.online_meet.dto.JoinUserDto;
 import com.ticonsys.online_meet.dto.PublishStreamDto;
 import com.ticonsys.online_meet.dto.RoomDto;
-import com.ticonsys.online_meet.dto.SubscribeToStreamsDto;
 import io.github.rashedul.janus.client.JanusClient;
 import io.github.rashedul.janus.client.JanusConfiguration;
 import io.github.rashedul.janus.client.JanusSession;
 import io.github.rashedul.janus.client.handle.impl.VideoRoomHandle;
 import io.github.rashedul.janus.client.plugins.videoroom.events.*;
 import io.github.rashedul.janus.client.plugins.videoroom.listeners.JanusVideoRoomListener;
-import io.github.rashedul.janus.client.plugins.videoroom.models.*;
+import io.github.rashedul.janus.client.plugins.videoroom.models.CreateRoomRequest;
+import io.github.rashedul.janus.client.plugins.videoroom.models.CreateRoomResponse;
+import io.github.rashedul.janus.client.plugins.videoroom.models.JoinRoomRequest;
+import io.github.rashedul.janus.client.plugins.videoroom.models.PublishRequest;
 import io.github.rashedul.janus.utils.ServerInfo;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -19,10 +21,12 @@ import org.json.JSONObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.messaging.simp.SimpMessagingTemplate;
 import org.springframework.stereotype.Service;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
@@ -41,18 +45,13 @@ public class RoomService {
     @Value("${janus.log}")
     private boolean janusLog;
 
-    private final SimpMessagingTemplate ws;
 
     // app-level maps
-    private final Map<String, RoomDto> rooms = new ConcurrentHashMap<>();
-    private final Map<Long, VideoRoomHandle> adminRoomHandles = new ConcurrentHashMap<>(); // janusRoomId -> admin handle
-    private final Map<String, List<String>> joinRooms = new ConcurrentHashMap<>();   // appRoomId -> user list
-    private final Map<String, VideoRoomHandle> userHandles = new ConcurrentHashMap<>(); // displayName -> handle
-    private final Map<String, JanusSession> userSessions = new ConcurrentHashMap<>();  // displayName -> session (for cleanup)
+    private final Map<String, RoomDto> rooms = new ConcurrentHashMap<>(); // roomId -> room always one room create
+    private final Map<String, List<JoinUserDto>> joinRooms = new ConcurrentHashMap<>();   // appRoomId -> user list
+    private final Map<String, VideoRoomHandle> userHandles = new ConcurrentHashMap<>(); // clientId -> Video handle
+    private final Map<String, JanusSession> userSessions = new ConcurrentHashMap<>();  // clientId -> Janus session (for cleanup)
 
-    public RoomService(SimpMessagingTemplate ws) {
-        this.ws = ws;
-    }
 
     @PostConstruct
     @SneakyThrows
@@ -100,22 +99,12 @@ public class RoomService {
         CreateRoomResponse createResp = adminHandle.createRoom(createRequest).get();
         long janusRoomId = createResp.room();
 
-        JoinRoomRequest joinReq = new JoinRoomRequest.Builder(janusRoomId)
-                .setDisplay(dto.getAdminName())
-                .build();
-
-        adminHandle.join(joinReq).get();
-
         dto.setRoomId(UUID.randomUUID().toString());
         dto.setJanusRoomId(janusRoomId);
+        rooms.clear();
         rooms.put(dto.getRoomId(), dto);
 
-        adminRoomHandles.put(janusRoomId, adminHandle);
-        joinRooms.put(dto.getRoomId(), new ArrayList<>(List.of(dto.getAdminName())));
-        userHandles.put(dto.getAdminName(), adminHandle); // admin's handle
-        userSessions.put(dto.getAdminName(), session);
-
-        logger.info("Created room {} (janus {}) by {}", dto.getRoomId(), janusRoomId, dto.getAdminName());
+        logger.info("Created room {} (janus {})", dto.getRoomId(), janusRoomId);
         return dto;
     }
 
@@ -127,28 +116,38 @@ public class RoomService {
         RoomDto roomDto = rooms.get(dto.getRoomId());
         if (roomDto == null) throw new RuntimeException("Room not found");
 
-        List<String> users = joinRooms.get(dto.getRoomId());
-        if (users.contains(dto.getName())) throw new RuntimeException("User already joined");
+        List<JoinUserDto> users = joinRooms.getOrDefault(dto.getRoomId(), new ArrayList<>());
+        List<String> userIds = users.stream().map(JoinUserDto::getClientId).toList();
+        if (userIds.contains(dto.getClientId())) throw new RuntimeException("User already joined");
         if (roomDto.getParticipants() <= users.size()) throw new RuntimeException("Room is full");
 
         JanusSession session = client.createSession().get();
         VideoRoomHandle userHandle = session.attachToVideoRoom().get();
 
-        addVideoRoomListener(userHandle, dto.getName());
+        addVideoRoomListener(userHandle, dto.getClientId());
 
         JoinRoomRequest joinReq = new JoinRoomRequest.Builder(roomDto.getJanusRoomId())
-                .setDisplay(dto.getName())
+                .setDisplay(dto.getDisplayName())
                 .build();
 
         userHandle.join(joinReq).get();
 
-        users.add(dto.getName());
+        String sdpOffer = dto.getSdp();
+        PublishStreamDto publishStreamDto = new PublishStreamDto();
+        publishStreamDto.setRoomId(dto.getRoomId());
+        publishStreamDto.setClientId(dto.getClientId());
+        publishStreamDto.setType(dto.getType());
+        publishStreamDto.setSdp(sdpOffer);
+        publishStream(publishStreamDto);
+
+        dto.setSdp(null);
+        users.add(dto);
         joinRooms.put(dto.getRoomId(), users);
 
-        userHandles.put(dto.getName(), userHandle);
-        userSessions.put(dto.getName(), session);
+        userHandles.put(dto.getClientId(), userHandle);
+        userSessions.put(dto.getClientId(), session);
 
-        logger.info("User {} joined room {}", dto.getName(), dto.getRoomId());
+        logger.info("User {} joined room {}", dto.getClientId(), dto.getRoomId());
         return dto;
     }
 
@@ -157,25 +156,35 @@ public class RoomService {
      */
     @SneakyThrows
     public void publishStream(PublishStreamDto dto) {
-        VideoRoomHandle handle = userHandles.get(dto.getDisplayName());
+
+        RoomDto roomDto = rooms.get(dto.getRoomId());
+        if (roomDto == null) throw new RuntimeException("Room not found");
+
+        JoinUserDto userDto = joinRooms.get(dto.getRoomId()).stream()
+                .filter(user -> user.getClientId().equals(dto.getClientId()))
+                .findFirst()
+                .orElseThrow(() -> new RuntimeException("User not joined"));
+
+        VideoRoomHandle handle = userHandles.get(dto.getRoomId());
         if (handle == null) throw new RuntimeException("User not joined");
 
         PublishRequest request = new PublishRequest.Builder()
-                .setDisplay(dto.getDisplayName())
+                .setDisplay(userDto.getDisplayName())
                 .setVideoCodec("vp8")
                 .setAudioCodec("opus")
                 .build();
 
         JSONObject json = request.toJson();
-        json.put("jsep", new JSONObject().put("type", "offer").put("sdp", dto.getSdpOffer()));
+        JSONObject jsep = new JSONObject();
+        jsep.put("jsep", new JSONObject().put("type", "offer").put("sdp", dto.getSdp()));
 
-        logger.info("Sending publish request for {}", dto.getDisplayName());
-        JSONObject resp = handle.sendMessage(json).get();
+        logger.info("Sending publish request for {}", userDto.getDisplayName());
+        JSONObject resp = handle.sendMessage(json, jsep).get();
 
         // Check direct response for jsep (some client libs return it directly)
         if (resp != null && resp.has("jsep")) {
-            JSONObject jsep = resp.getJSONObject("jsep");
-            forwardJsepToClients(dto.getRoomId(), dto.getDisplayName(), jsep);
+            jsep = resp.getJSONObject("jsep");
+            forwardJsepToClients(dto.getRoomId(), userDto.getDisplayName(), jsep);
         }
         // Otherwise the listener will receive any asynchronous jsep; listener also forwards
     }
@@ -215,7 +224,7 @@ public class RoomService {
         payload.put("display", display);
         payload.put("roomId", roomId == null ? "" : roomId);
         payload.put("jsep", jsep);
-        ws.convertAndSend("/topic/notify-received", payload.toString());
+        //TODO WEB SOCKET
         logger.info("Forwarded JSEP to clients for {} (room {})", display, roomId);
     }
 
@@ -243,7 +252,8 @@ public class RoomService {
                             o.put("id", p.id());
                             return o.toString();
                         }).toList());
-                ws.convertAndSend("/topic/notify-received", payload.toString());
+                System.err.println(payload);
+                //TODO WEB SOCKET
             }
 
             @Override
@@ -252,7 +262,7 @@ public class RoomService {
                 JSONObject payload = new JSONObject();
                 payload.put("event", "unpublished");
                 payload.put("unpublished", event.unpublished());
-                ws.convertAndSend("/topic/notify-received", payload.toString());
+                //TODO WEB SOCKET
             }
 
             @Override
@@ -261,7 +271,7 @@ public class RoomService {
                 JSONObject payload = new JSONObject();
                 payload.put("event", "participant-left");
                 payload.put("leaving", event.leaving());
-                ws.convertAndSend("/topic/notify-received", payload.toString());
+                //TODO WEB SOCKET
             }
 
             @Override
@@ -270,8 +280,40 @@ public class RoomService {
                 JSONObject payload = new JSONObject();
                 payload.put("event", "room-destroyed");
                 payload.put("room", event.room());
-                ws.convertAndSend("/topic/notify-received", payload.toString());
+                //TODO WEB SOCKET
             }
+
+            @Override
+            public void onSubscriberAttached(AttachedEvent event) {
+                logger.info("onSubscriberAttached Event: {}", event);
+            }
+
+            @Override
+            public void onEvent(JSONObject event) {
+                logger.info("Room Event: {}", event);
+
+            }
+
+            @Override
+            public void onTalking(TalkingEvent event) {
+                logger.info("onTalking Event: {}", event);
+            }
+
+            @Override
+            public void onStoppedTalking(StoppedTalkingEvent event) {
+                logger.info("StoppedTalkingEvent Event: {}", event);
+            }
+
+            @Override
+            public void onSubscriptionUpdated(UpdatedEvent event) {
+                logger.info("UpdatedEvent Event: {}", event);
+            }
+
+            @Override
+            public void onSwitched(SwitchedEvent event) {
+                logger.info("SwitchedEvent Event: {}", event);
+            }
+
         });
     }
 

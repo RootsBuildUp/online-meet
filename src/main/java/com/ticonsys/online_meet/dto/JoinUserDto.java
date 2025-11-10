@@ -9,5 +9,8 @@ import lombok.NoArgsConstructor;
 @AllArgsConstructor
 public class JoinUserDto {
     private String roomId;
-    private String name;
+    private String clientId;
+    private String displayName;
+    private String type; // offer (video, audio info), answer (Accept offer & confirm settings), ice (Share network candidates to connect peers)
+    private String sdp;
 }

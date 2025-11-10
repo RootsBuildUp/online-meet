@@ -8,9 +8,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 @Controller
 public class MeetingController {
 
-    @GetMapping("/meet/{room}")
-    public String meet(@PathVariable String room, Model model) {
-        model.addAttribute("roomName", room);
+    @GetMapping("/meet")
+    public String meet(Model model) {
+//        model.addAttribute("roomName", room);
         return "index"; // returns templates/index.html (Thymeleaf)
     }
 }

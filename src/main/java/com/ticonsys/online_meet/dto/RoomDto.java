@@ -14,8 +14,6 @@ public class RoomDto {
     private String name;
     @NonNull
     private int participants;
-    @NonNull
-    private String adminName;
     private long janusRoomId;
 
 
