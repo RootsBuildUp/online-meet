@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="utf-8">
+    <title>Janus VideoRoom</title>
+    <style>
+        video { width: 320px; height: 240px; margin: 5px; background: black; }
+        #videos { display: flex; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+<h1>Janus VideoRoom</h1>
+
+<label>Room ID: <input id="roomId" value="room-1234"></label>
+<label>User Name: <input id="displayName" value="Alice"></label>
+<button onclick="joinRoom()">Join Room</button>
+
+<div id="videos"></div>
+
+<script>
+
+    let janusWs;
+    let sessionId;
+    let handleId;
+    let localStream;
+
+    const videos = document.getElementById("videos");
+
+    async function joinRoom() {
+        const roomId = document.getElementById("roomId").value;
+        const displayName = document.getElementById("displayName").value;
+
+        // 1️⃣ Get media
+        localStream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
+        addVideo(localStream, "local", true);
+
+        // 2️⃣ Connect Janus WebSocket
+        janusWs = new WebSocket("ws://localhost:8188/janus");
+        console.log(janusWs)
+
+        janusWs.onopen = () => {
+            // Create session
+            janusWs.send(JSON.stringify({
+                janus: "create",
+                transaction: "t1"
+            }));
+        };
+
+        janusWs.onmessage = async (event) => {
+            const msg = JSON.parse(event.data);
+            console.log(msg);
+
+            // 3️⃣ Save session ID
+            if(msg.janus === "success" && msg.transaction === "t1") {
+                sessionId = msg.data.id;
+
+                // Attach VideoRoom plugin
+                janusWs.send(JSON.stringify({
+                    janus: "attach",
+                    plugin: "janus.plugin.videoroom",
+                    session_id: sessionId,
+                    transaction: "t2"
+                }));
+            }
+
+            // 4️⃣ Save handle ID and join room
+            if(msg.janus === "success" && msg.transaction === "t2") {
+                handleId = msg.data.id;
+
+                // Join publisher role
+                janusWs.send(JSON.stringify({
+                    janus: "message",
+                    body: {
+                        request: "join",
+                        room: parseInt(roomId),
+                        ptype: "publisher",
+                        display: displayName
+                    },
+                    session_id: sessionId,
+                    handle_id: handleId,
+                    transaction: "t3"
+                }));
+            }
+
+            // 5️⃣ Handle SDP offer from Janus
+            if(msg.janus === "event" && msg.jsep) {
+                const pc = new RTCPeerConnection({iceServers: [{urls:"stun:stun.voip.eutelia.it:3478"}]});
+                localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+                pc.ontrack = (e) => addVideo(e.streams[0], "remote", false);
+                pc.onicecandidate = (e) => {
+                    if(e.candidate) {
+                        janusWs.send(JSON.stringify({
+                            janus: "trickle",
+                            candidate: e.candidate,
+                            session_id: sessionId,
+                            handle_id: handleId,
+                            transaction: "t4"
+                        }));
+                    }
+                };
+
+                await pc.setRemoteDescription(msg.jsep);
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+
+                janusWs.send(JSON.stringify({
+                    janus: "message",
+                    body: { request: "start" },
+                    jsep: answer,
+                    session_id: sessionId,
+                    handle_id: handleId,
+                    transaction: "t5"
+                }));
+            }
+        };
+    }
+
+    // Helper: add video
+    function addVideo(stream, id, muted) {
+        let v = document.getElementById(id);
+        if(!v) {
+            v = document.createElement("video");
+            v.id = id;
+            v.autoplay = true;
+            v.playsInline = true;
+            v.muted = muted;
+            videos.appendChild(v);
+        }
+        v.srcObject = stream;
+    }
+</script>
+</body>
+</html>

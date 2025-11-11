@@ -51,18 +51,20 @@ public class RoomService {
     private final Map<String, List<JoinUserDto>> joinRooms = new ConcurrentHashMap<>();   // appRoomId -> user list
     private final Map<String, VideoRoomHandle> userHandles = new ConcurrentHashMap<>(); // clientId -> Video handle
     private final Map<String, JanusSession> userSessions = new ConcurrentHashMap<>();  // clientId -> Janus session (for cleanup)
-
+    private final static String ROOM_NAME = "Test Room";
+    private final static Integer PARTICIPANTS = 50;
 
     @PostConstruct
     @SneakyThrows
     public void init() {
-        JanusConfiguration config = new JanusConfiguration(
-                janusUrl,
-                janusWsPort,
-                "/janus",
-                janusWsSSL,
-                janusLog
-        );
+//        JanusConfiguration config = new JanusConfiguration(
+//                janusUrl,
+//                janusWsPort,
+//                "/janus",
+//                janusWsSSL,
+//                janusLog
+//        );
+        JanusConfiguration config = new JanusConfiguration(janusUrl);
 
         client = new JanusClient(config);
 
@@ -70,7 +72,8 @@ public class RoomService {
             logger.info("Shutting down JanusClient...");
             try {
                 if (client != null) client.disconnect();
-            } catch (Exception ignore) {}
+            } catch (Exception ignore) {
+            }
         }));
 
         logger.info("Connecting to Janus server at {}...", config.getUri());
@@ -81,7 +84,7 @@ public class RoomService {
      * Create a room and join admin as publisher.
      */
     @SneakyThrows
-    public RoomDto createRoom(RoomDto dto) {
+    public RoomDto createRoom() {
         ServerInfo info = client.getServerInfo().get();
         logger.info("Janus server: {}", info.versionString());
 
@@ -89,18 +92,21 @@ public class RoomService {
         VideoRoomHandle adminHandle = session.attachToVideoRoom().get();
 
         // add listener to admin handle; this listener also forwards JSEP answers to clients:
-        addVideoRoomListener(adminHandle, dto.getName());
+        addVideoRoomListener(adminHandle);
 
         CreateRoomRequest createRequest = new CreateRoomRequest.Builder()
-                .setDescription(dto.getName())
-                .setPublishers(dto.getParticipants())
+                .setDescription(ROOM_NAME)
+                .setPublishers(PARTICIPANTS)
                 .build();
 
         CreateRoomResponse createResp = adminHandle.createRoom(createRequest).get();
         long janusRoomId = createResp.room();
 
+        RoomDto dto = new RoomDto();
         dto.setRoomId(UUID.randomUUID().toString());
         dto.setJanusRoomId(janusRoomId);
+        dto.setParticipants(PARTICIPANTS);
+        dto.setName(ROOM_NAME);
         rooms.clear();
         rooms.put(dto.getRoomId(), dto);
 
@@ -124,23 +130,13 @@ public class RoomService {
         JanusSession session = client.createSession().get();
         VideoRoomHandle userHandle = session.attachToVideoRoom().get();
 
-        addVideoRoomListener(userHandle, dto.getClientId());
+        addVideoRoomListener(userHandle);
 
         JoinRoomRequest joinReq = new JoinRoomRequest.Builder(roomDto.getJanusRoomId())
                 .setDisplay(dto.getDisplayName())
                 .build();
 
         userHandle.join(joinReq).get();
-
-        String sdpOffer = dto.getSdp();
-        PublishStreamDto publishStreamDto = new PublishStreamDto();
-        publishStreamDto.setRoomId(dto.getRoomId());
-        publishStreamDto.setClientId(dto.getClientId());
-        publishStreamDto.setType(dto.getType());
-        publishStreamDto.setSdp(sdpOffer);
-        publishStream(publishStreamDto);
-
-        dto.setSdp(null);
         users.add(dto);
         joinRooms.put(dto.getRoomId(), users);
 
@@ -165,7 +161,7 @@ public class RoomService {
                 .findFirst()
                 .orElseThrow(() -> new RuntimeException("User not joined"));
 
-        VideoRoomHandle handle = userHandles.get(dto.getRoomId());
+        VideoRoomHandle handle = userHandles.get(dto.getClientId());
         if (handle == null) throw new RuntimeException("User not joined");
 
         PublishRequest request = new PublishRequest.Builder()
@@ -175,18 +171,10 @@ public class RoomService {
                 .build();
 
         JSONObject json = request.toJson();
-        JSONObject jsep = new JSONObject();
-        jsep.put("jsep", new JSONObject().put("type", "offer").put("sdp", dto.getSdp()));
 
         logger.info("Sending publish request for {}", userDto.getDisplayName());
-        JSONObject resp = handle.sendMessage(json, jsep).get();
+        handle.sendMessage(json, dto.getJsep());
 
-        // Check direct response for jsep (some client libs return it directly)
-        if (resp != null && resp.has("jsep")) {
-            jsep = resp.getJSONObject("jsep");
-            forwardJsepToClients(dto.getRoomId(), userDto.getDisplayName(), jsep);
-        }
-        // Otherwise the listener will receive any asynchronous jsep; listener also forwards
     }
 
 
@@ -200,15 +188,18 @@ public class RoomService {
         if (handle != null) {
             try {
                 handle.unpublish().get();
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
             try {
                 handle.detach();
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
         if (session != null) {
             try {
                 session.destroy();
-            } catch (Exception ignored) {}
+            } catch (Exception ignored) {
+            }
         }
         // also remove from joinRooms
         joinRooms.forEach((roomId, list) -> list.remove(displayName));
@@ -231,7 +222,7 @@ public class RoomService {
     /**
      * Add listener to a handle. For some events, we forward info to clients as well.
      */
-    private void addVideoRoomListener(VideoRoomHandle handle, String displayName) {
+    private void addVideoRoomListener(VideoRoomHandle handle) {
         handle.addVideoRoomListener(new JanusVideoRoomListener() {
             @Override
             public void onJoined(JoinedEvent event) {

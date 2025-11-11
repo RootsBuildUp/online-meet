@@ -3,8 +3,11 @@ package com.ticonsys.online_meet.handler;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArraySet;
+
+import org.springframework.stereotype.Service;
 import org.springframework.web.socket.WebSocketSession;
 
+@Service
 public class RoomManager {
 
     // Map<roomId, Set of sessions>

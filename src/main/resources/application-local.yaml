@@ -3,6 +3,6 @@ server:
 
 janus:
   url: localhost
-  ws-port: 8188
+  ws-port: 8088
   ws-ssl: false
   log: true
