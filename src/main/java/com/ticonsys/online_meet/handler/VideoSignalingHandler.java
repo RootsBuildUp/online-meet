@@ -34,8 +34,8 @@ public class VideoSignalingHandler extends TextWebSocketHandler {
                 roomManager.addToRoom(roomId, session);
                 JoinUserDto dto = new  JoinUserDto(roomId, clientId, displayName);
                 roomService.joinRoom(dto);
-                Thread.sleep(3000);
-                session.sendMessage(new TextMessage(new JSONObject().put("type", "new-publisher").toString()));
+                json.put("type","new-publisher");
+                session.sendMessage(new TextMessage(json.toString()));
             }
             case "offer", "answer" -> {
                 System.err.println("room activity: " + type);
@@ -43,7 +43,7 @@ public class VideoSignalingHandler extends TextWebSocketHandler {
                 JSONObject jsep = new JSONObject();
                 jsep.put("jsep", new JSONObject().put("type", type).put("sdp", sdp));
                 roomService.publishStream(new PublishStreamDto(roomId, clientId, type, jsep));
-                Thread.sleep(3000);
+                Thread.sleep(1000);
             }
             case "ice" -> {
                 System.err.println("room activity: " + type);

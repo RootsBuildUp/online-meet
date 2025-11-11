@@ -17,7 +17,6 @@
         }
     </style>
 </head>
-
 <body>
 <h1>Multi-User Video Room</h1>
 
@@ -29,166 +28,191 @@
 <div id="videos"></div>
 
 <script>
-    const videos = document.getElementById("videos");
-
+    const videos = document.getElementById('videos');
     let ws;
     let localStream;
-    let roomId, clientId, displayName;
-
-    const peers = {};  // remoteId -> RTCPeerConnection
+    let localPc;
+    const peers = {}; // clientId -> RTCPeerConnection
+    let roomId;
+    let displayName;
+    let clientId;
 
     async function joinRoom() {
-
-        roomId = document.getElementById("roomId").value.trim();
-        clientId = document.getElementById("clientId").value.trim();
-        displayName = document.getElementById("displayName").value.trim();
+        console.log(peers)
+        roomId = document.getElementById('roomId').value.trim();
+        clientId = document.getElementById('clientId').value.trim();
+        displayName = document.getElementById('displayName').value.trim();
 
         if (!roomId || !clientId || !displayName) {
-            alert("Enter Room ID, User ID, Display Name");
+            alert('Please enter Room ID, User ID, and Display Name');
             return;
         }
 
-        // ✅ Get media
-        localStream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
+        try {
+            // Check media devices
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const hasVideo = devices.some(d => d.kind === 'videoinput');
+            const hasAudio = devices.some(d => d.kind === 'audioinput');
 
-        // show own (muted)
-        addVideo(localStream, clientId, true);
-
-        // ✅ Websocket connect
-        const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + "/ws";
-        ws = new WebSocket(wsUrl);
-
-        ws.onopen = () => {
-            ws.send(JSON.stringify({
-                type: "join",
-                roomId, clientId, displayName
-            }));
-        };
-
-        ws.onmessage = async (event) => {
-            const msg = JSON.parse(event.data);
-            console.log('Received msg : -> ', msg)
-
-            switch (msg.type) {
-
-                case "offer":
-                    if (msg.clientId === clientId) return;
-
-                    console.log("➡ Offer received from", msg.clientId);
-                    await handleOffer(msg);
-                    break;
-
-                case "answer":
-                    await handleAnswer(msg);
-                    break;
-
-                case "ice":
-                    await handleIce(msg);
-                    break;
-
-                case "new-publisher":
-                    if (msg.clientId === clientId) {
-                        await callPeer();
-                    }
-                    break;
+            if (!hasVideo && !hasAudio) {
+                alert("No camera or microphone found on this device.");
+                return;
             }
-        };
-    }
 
-    // ✅ handle offer
-    async function handleOffer(msg) {
-        const pc = getPeer(msg.clientId, msg.displayName);
+            // Get local media
+            localStream = await navigator.mediaDevices.getUserMedia({video: hasVideo, audio: hasAudio});
+            addVideo(localStream, clientId, true);
 
-        await pc.setRemoteDescription({type: "offer", sdp: msg.sdp});
+            // Connect WebSocket
+            const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + '/ws';
+            ws = new WebSocket(wsUrl);
+            console.log(ws)
 
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
+            ws.onopen = () => {
+                console.log('WebSocket connected');
+                ws.send(JSON.stringify({
+                    type: 'join',
+                    roomId,
+                    clientId,
+                    displayName,
+                }));
+            };
 
-        ws.send(JSON.stringify({
-            type: "answer",
-            roomId,
-            clientId: msg.clientId,
-            displayName: msg.displayName,
-            sdp: answer.sdp
-        }));
-    }
+            ws.onmessage = async (event) => {
+                console.log(event)
+                const msg = JSON.parse(event.data);
+                console.log('ws received : ', msg)
 
-    // ✅ handle answer
-    async function handleAnswer(msg) {
-        const pc = peers[msg.clientId];
-        if (!pc) {
-            console.log("❌ No peer found for", msg.clientId);
-            // const pc = getPeer(msg.clientId, msg.displayName);
-            // await pc.setRemoteDescription({type: "answer", sdp: msg.sdp});
-            return;
+                switch (msg.type) {
+                    case 'offer':
+                        if (msg.clientId === clientId) break;
+
+                        console.log('Received offer from', msg.clientId);
+
+                        let pc = createPeerConnection(msg.clientId);
+                        peers[msg.clientId] = pc;
+
+                        await pc.setRemoteDescription({type: 'offer', sdp: msg.sdp});
+                        let answer = await pc.createAnswer();
+                        await pc.setLocalDescription(answer);
+
+                        ws.send(JSON.stringify({
+                            type: 'answer',
+                            roomId,
+                            clientId,
+                            displayName,
+                            sdp: answer.sdp
+                        }));
+                        break;
+
+                    case 'answer':
+                        if (msg.clientId === clientId) break;
+
+                        console.log('Received ' + msg.type + ' from', msg.clientId);
+
+                        let pcA = createPeerConnection(msg.clientId);
+                        peers[msg.clientId] = pcA;
+
+                        await pcA.setRemoteDescription({type: 'offer', sdp: msg.sdp});
+                        break;
+
+                    case 'answer-old':
+                        if (!peers[msg.clientId]) break;
+
+                        console.log('Received answer from', msg.clientId);
+                        await peers[msg.clientId].setRemoteDescription({type: 'answer', sdp: msg.sdp});
+                        break;
+
+                    case 'ice':
+                        if (!peers[msg.clientId]) break;
+
+                        console.log('Received ICE from', msg.clientId);
+                        try {
+                            await peers[msg.clientId].addIceCandidate(new RTCIceCandidate(msg.candidate));
+                        } catch (e) {
+                            console.warn('Error adding ICE candidate:', e);
+                        }
+                        break;
+
+                    case 'new-publisher':
+                        console.log('New publisher joined:', msg.clientId);
+                        await createOfferForPeer(msg);
+                        break;
+                }
+            };
+
+            ws.onclose = () => console.log('WebSocket closed');
+
+            // Create local publisher peer
+            localPc = new RTCPeerConnection();
+            localStream.getTracks().forEach(track => localPc.addTrack(track, localStream));
+
+            localPc.onicecandidate = e => {
+                if (e.candidate) {
+                    ws.send(JSON.stringify({
+                        type: 'ice',
+                        roomId,
+                        clientId,
+                        displayName,
+                        candidate: e.candidate
+                    }));
+                }
+            };
+
+        } catch (err) {
+            console.error('Error accessing media devices:', err);
+            alert("Could not access camera/microphone. Please check permissions.");
         }
-        await pc.setRemoteDescription({type: "answer", sdp: msg.sdp});
     }
 
-    // ✅ handle ICE
-    async function handleIce(msg) {
-        const pc = peers[msg.clientId];
-        if (!pc) {
-            // const pc = getPeer(msg.clientId, msg.displayName);
-            // await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-            console.log("❌ No peer found for", msg.clientId);
-            return;
-        }
-        await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
-    }
-
-    // ✅ create peer + add tracks
-    function getPeer(remoteId, displayName) {
-
-        if (peers[remoteId]) return peers[remoteId];
-
+    // Create a peer connection for remote user
+    function createPeerConnection(remoteId) {
         const pc = new RTCPeerConnection(
-            // {
-            //     iceServers: [{urls: "stun:localhost:3478"}]
-            // }
+            {
+                iceServers: [
+                    {urls: 'stun:stun.l.google.com:19302'} // Free public STUN server
+                ]
+            }
         );
 
-        // ✅ Add local tracks so remote shows video
-        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+        pc.ontrack = event => addVideo(event.streams[0], remoteId, false);
 
-        pc.ontrack = (event) => {
-            console.log("📌 Remote track", remoteId);
-            addVideo(event.streams[0], remoteId, false);
-        };
-
-        pc.onicecandidate = (e) => {
+        pc.onicecandidate = e => {
             if (e.candidate) {
                 ws.send(JSON.stringify({
-                    type: "ice",
+                    type: 'ice',
                     roomId,
-                    clientId: remoteId,
-                    displayName: displayName,
+                    clientId,
+                    displayName,
                     candidate: e.candidate
                 }));
             }
         };
 
-        peers[clientId] = pc;
         return pc;
     }
 
-    // ✅ Initiate a call
-    async function callPeer() {
-        const pc = getPeer(clientId, displayName);
+    // Initiate offer to new peer
+    async function createOfferForPeer(msg) {
+        const pc = createPeerConnection(msg.clientId);
+        peers[msg.clientId] = pc;
+        console.log(pc)
+
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
 
         ws.send(JSON.stringify({
-            type: "offer",
+            type: 'offer',
             roomId,
-            clientId,
-            displayName,
+            clientId: msg.clientId,
+            displayName: msg.displayName,
             sdp: offer.sdp
         }));
     }
 
-    // ✅ Add video
+    // Add video element
     function addVideo(stream, id, mute) {
         let v = document.getElementById(id);
 
@@ -196,16 +220,19 @@
             v = document.createElement("video");
             v.id = id;
             v.autoplay = true;
-            v.muted = mute;                  // Must be set BEFORE srcObject
             v.setAttribute("playsinline", "true"); // Important for mobile Safari
+            if (mute) {
+                v.setAttribute("muted", "true"); // Important for mobile Safari
+                v.muted = mute;
+            }               // Must be set BEFORE srcObject
             v.playsInline = true;             // Also add the JS property (for completeness)
             videos.appendChild(v);
         }
 
         v.srcObject = stream;
-
         // Try to play explicitly (some browsers require a play call)
         v.play().catch(err => console.warn("Video play failed:", err));
+        console.log(stream)
 
         console.log(v);
     }

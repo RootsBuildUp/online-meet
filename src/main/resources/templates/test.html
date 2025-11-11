@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebRTC Local Peer Connection</title>
+</head>
+<body>
+<h2>WebRTC Local Connection Demo</h2>
+<video id="localVideo" autoplay muted playsinline></video>
+<video id="remoteVideo" autoplay playsinline></video>
+<br>
+<button onclick="startConnection()">Start Connection</button>
+<script>
+    let localConnection;
+    let remoteConnection;
+    let localStream;
+    const localVideo = document.getElementById('localVideo');
+    const remoteVideo = document.getElementById('remoteVideo');
+    const stunServers = {
+        iceServers: [
+            { urls: 'stun:stun.l.google.com:19302' } // Free public STUN server
+        ]
+    };
+
+    async function startConnection() {
+        try {
+            // 1. Get local media stream
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            localVideo.srcObject = localStream;
+
+            // 2. Create peer connections
+            localConnection = new RTCPeerConnection(stunServers);
+            remoteConnection = new RTCPeerConnection(stunServers);
+
+            // 3. Set up event handlers
+            localConnection.onicecandidate = e => onIceCandidate(localConnection, e);
+            remoteConnection.onicecandidate = e => onIceCandidate(remoteConnection, e);
+            remoteConnection.ontrack = e => remoteVideo.srcObject = e.streams[0];
+
+            // 4. Add tracks to local connection
+            localStream.getTracks().forEach(track => localConnection.addTrack(track, localStream));
+
+            // 5. Create offer and exchange descriptions (signaling simulation)
+            const offer = await localConnection.createOffer();
+            await localConnection.setLocalDescription(offer);
+            await remoteConnection.setRemoteDescription(offer);
+
+            const answer = await remoteConnection.createAnswer();
+            await remoteConnection.setLocalDescription(answer);
+            await localConnection.setRemoteDescription(answer);
+
+            console.log('Connection established (signaling complete). Check console for state changes.');
+
+        } catch (error) {
+            console.error('Error starting connection:', error);
+        }
+    }
+
+    function onIceCandidate(pc, event) {
+        if (event.candidate) {
+            // Simulate signaling channel: add candidate to the other peer
+            const otherPc = (pc === localConnection) ? remoteConnection : localConnection;
+            otherPc.addIceCandidate(new RTCIceCandidate(event.candidate))
+                .catch(e => console.error('Error adding ice candidate:', e));
+        }
+    }
+
+    // Optional: Monitor connection state
+    if (localConnection) {
+        localConnection.onconnectionstatechange = () => {
+            console.log(`Local connection state: ${localConnection.connectionState}`);
+        };
+    }
+    if (remoteConnection) {
+        remoteConnection.onconnectionstatechange = () => {
+            console.log(`Remote connection state: ${remoteConnection.connectionState}`);
+        };
+    }
+</script>
+</body>
+</html>

@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8"/>
+    <title>Multi-User Video Room</title>
+    <style>
+        video {
+            width: 320px;
+            height: 240px;
+            margin: 8px;
+            background: black;
+        }
+
+        #videos {
+            display: flex;
+            flex-wrap: wrap;
+        }
+    </style>
+</head>
+
+<body>
+<h1>Multi-User Video Room</h1>
+
+<label>Room ID: <input id="roomId" value=""></label>
+<label>User ID: <input id="clientId" value=""></label>
+<label>User Name: <input id="displayName" value=""></label>
+<button onclick="joinRoom()">Join Room</button>
+
+<div id="videos"></div>
+
+<script>
+    const videos = document.getElementById("videos");
+
+    let ws;
+    let localStream;
+    let roomId, clientId, displayName;
+
+    const peers = {};  // remoteId -> RTCPeerConnection
+
+    async function joinRoom() {
+
+        roomId = document.getElementById("roomId").value.trim();
+        clientId = document.getElementById("clientId").value.trim();
+        displayName = document.getElementById("displayName").value.trim();
+
+        if (!roomId || !clientId || !displayName) {
+            alert("Enter Room ID, User ID, Display Name");
+            return;
+        }
+
+        // ✅ Get media
+        localStream = await navigator.mediaDevices.getUserMedia({video: true, audio: true});
+
+        // show own (muted)
+        addVideo(localStream, clientId, true);
+
+        // ✅ Websocket connect
+        const wsUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host + "/ws";
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+            ws.send(JSON.stringify({
+                type: "join",
+                roomId, clientId, displayName
+            }));
+        };
+
+        ws.onmessage = async (event) => {
+            const msg = JSON.parse(event.data);
+            console.log('Received msg : -> ', msg)
+
+            switch (msg.type) {
+
+                case "offer":
+                    if (msg.clientId === clientId) return;
+
+                    console.log("➡ Offer received from", msg.clientId);
+                    await handleOffer(msg);
+                    break;
+
+                case "answer":
+                    await handleAnswer(msg);
+                    break;
+
+                case "ice":
+                    await handleIce(msg);
+                    break;
+
+                case "new-publisher":
+                    if (msg.clientId !== clientId) {
+                        await callPeer();
+                    }
+                    break;
+            }
+        };
+    }
+
+    // ✅ handle offer
+    async function handleOffer(msg) {
+        const pc = getPeer(msg.clientId, msg.displayName);
+
+        await pc.setRemoteDescription({type: "offer", sdp: msg.sdp});
+
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+
+        ws.send(JSON.stringify({
+            type: "answer",
+            roomId,
+            clientId: msg.clientId,
+            displayName: msg.displayName,
+            sdp: answer.sdp
+        }));
+    }
+
+    // ✅ handle answer
+    async function handleAnswer(msg) {
+        const pc = peers[msg.clientId];
+        if (!pc) {
+            console.log("❌ No peer found for", msg.clientId);
+            // const pc = getPeer(msg.clientId, msg.displayName);
+            // await pc.setRemoteDescription({type: "answer", sdp: msg.sdp});
+            return;
+        }
+        await pc.setRemoteDescription({type: "answer", sdp: msg.sdp});
+    }
+
+    // ✅ handle ICE
+    async function handleIce(msg) {
+        const pc = peers[msg.clientId];
+        if (!pc) {
+            // const pc = getPeer(msg.clientId, msg.displayName);
+            // await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+            console.log("❌ No peer found for", msg.clientId);
+            return;
+        }
+        await pc.addIceCandidate(new RTCIceCandidate(msg.candidate));
+    }
+
+    // ✅ create peer + add tracks
+    function getPeer(remoteId, displayName) {
+
+        if (peers[remoteId]) return peers[remoteId];
+
+        const pc = new RTCPeerConnection(
+            // {
+            //     iceServers: [{urls: "stun:localhost:3478"}]
+            // }
+        );
+
+        // ✅ Add local tracks so remote shows video
+        localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+
+        pc.ontrack = (event) => {
+            console.log("📌 Remote track", remoteId);
+            addVideo(event.streams[0], remoteId, false);
+        };
+
+        pc.onicecandidate = (e) => {
+            if (e.candidate) {
+                ws.send(JSON.stringify({
+                    type: "ice",
+                    roomId,
+                    clientId: remoteId,
+                    displayName: displayName,
+                    candidate: e.candidate
+                }));
+            }
+        };
+
+        peers[clientId] = pc;
+        return pc;
+    }
+
+    // ✅ Initiate a call
+    async function callPeer() {
+        const pc = getPeer(clientId, displayName);
+
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+
+        ws.send(JSON.stringify({
+            type: "offer",
+            roomId,
+            clientId,
+            displayName,
+            sdp: offer.sdp
+        }));
+    }
+
+    // ✅ Add video
+    function addVideo(stream, id, mute) {
+        let v = document.getElementById(id);
+
+        if (!v) {
+            v = document.createElement("video");
+            v.id = id;
+            v.autoplay = true;
+            v.setAttribute("playsinline", "true"); // Important for mobile Safari
+            v.setAttribute("muted", mute+""); // Important for mobile Safari
+            v.muted = mute;                  // Must be set BEFORE srcObject
+            v.playsInline = true;             // Also add the JS property (for completeness)
+            videos.appendChild(v);
+        }
+
+        v.srcObject = stream;
+
+        // Try to play explicitly (some browsers require a play call)
+        v.play().catch(err => console.warn("Video play failed:", err));
+
+        console.log(v);
+    }
+</script>
+</body>
+</html>
