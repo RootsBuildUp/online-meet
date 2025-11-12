@@ -77,9 +77,9 @@ var Janus = (function (factory) {
 			this.cache = cache;
 			// Wait for events from the Chrome Extension
 			window.addEventListener('message', function (event) {
-				if(event.origin != window.location.origin)
+				if(event.origin !== window.location.origin)
 					return;
-				if(event.data.type == 'janusGotScreen' && cache[event.data.id]) {
+				if(event.data.type === 'janusGotScreen' && cache[event.data.id]) {
 					let callback = cache[event.data.id];
 					delete cache[event.data.id];
 					if(event.data.sourceId === '') {
@@ -90,7 +90,7 @@ var Janus = (function (factory) {
 					} else {
 						callback(null, event.data.sourceId);
 					}
-				} else if(event.data.type == 'janusGetScreenPending') {
+				} else if(event.data.type === 'janusGetScreenPending') {
 					console.log('clearing ', event.data.id);
 					window.clearTimeout(event.data.id);
 				}
