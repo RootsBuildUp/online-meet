@@ -7,9 +7,15 @@ import org.springframework.web.bind.annotation.GetMapping;
 @Controller
 public class MeetingController {
 
-    @GetMapping("/meet")
+    @GetMapping("/video-meet")
     public String meet(Model model) {
 //        model.addAttribute("roomName", room);
-        return "index"; // returns templates/index.html (Thymeleaf)
+        return "videoroom"; // returns templates/videoroom.html (Thymeleaf)
+    }
+
+    @GetMapping("/test")
+    public String test(Model model) {
+//        model.addAttribute("roomName", room);
+        return "index-test"; // returns templates/test.html (Thymeleaf)
     }
 }

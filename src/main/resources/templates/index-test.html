@@ -35,7 +35,7 @@
         addVideo(localStream, "local", true);
 
         // 2️⃣ Connect Janus WebSocket
-        janusWs = new WebSocket("ws://localhost:8188/janus");
+        janusWs = new WebSocket("ws://localhost:8188/janus", "janus-protocol");
         console.log(janusWs)
 
         janusWs.onopen = () => {
