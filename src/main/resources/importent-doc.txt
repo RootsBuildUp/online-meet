@@ -1,0 +1,142 @@
+
+
+docker run -d `
+  --name janus `
+  -p 8088:8088 `          # HTTP REST API
+  -p 8188:8188 `          # WebSocket
+  -p 7089:7089 `          # Admin API
+  -p 8089:8089 `          # HTTPS (optional)
+  -p 8989:8989 `          # HTTPS WebSocket (optional)
+  -p 19302:19302 `        # STUN/TURN UDP
+  -p 20000-20100:20000-20100/udp `  # ICE media
+  -v C:/Users/Masum/Documents/projects/janus-config/janus.jcfg:/usr/local/etc/janus/janus.jcfg `
+  -v C:/Users/Masum/Documents/projects/janus-config/janus.plugin.videoroom.jcfg:/usr/local/etc/janus/janus.plugin.videoroom.jcfg `
+  -v C:/Users/Masum/Documents/projects/janus-config/janus.transport.http.jcfg:/usr/local/etc/janus/janus.transport.http.jcfg `
+  -v C:/Users/Masum/Documents/projects/janus-config/janus.transport.websockets.jcfg:/usr/local/etc/janus/janus.transport.websockets.jcfg `
+  canyan/janus-gateway
+
+-----------------------------------------------------
+
+
+Then run Docker mapping to that folder:
+
+docker run -d `
+  --name janus `
+  -p 8088:8088 `
+  -p 8188:8188 `
+  -p 7089:7089 `
+  -p 8089:8089 `
+  -p 8989:8989 `
+  -p 3478:3478/udp `
+  -v /c/Users/Masum/Documents/projects/janus-config/janus.jcfg:/usr/local/etc/janus/janus.jcfg `
+  -v /c/Users/Masum/Documents/projects/janus-config/janus.transport.http.jcfg:/usr/local/etc/janus/janus.transport.http.jcfg `
+  -v /c/Users/Masum/Documents/projects/janus-config/janus.transport.websockets.jcfg:/usr/local/etc/janus/janus.transport.websockets.jcfg `
+  canyan/janus-gateway
+
+git - bash:
+
+docker cp /c/Users/Masum/Documents/projects/meet/online-meet/src/main/resources/keystore.p12 janus:/usr/local/share/ca-certificates
+
+docker cp /c/Users/Masum/Documents/projects/meet/online-meet/src/main/resources/mycert.pem janus:/usr/local/share/ca-certificates
+
+docker cp /c/Users/Masum/Documents/projects/meet/online-meet/src/main/resources/mycert.key janus:/usr/local/share/ca-certificates
+
+docker restart janus
+docker logs -f janus
+
+docker start janus
+
+------------------------------------------------------------------------
+
+docker exec -it janus bash
+cd /usr/local/share/ca-certificates
+ls
+openssl pkcs12 -in keystore.p12 -out mycert.pem -clcerts -nokeys
+openssl pkcs12 -in keystore.p12 -out mycert.key -nocerts -nodes
+
+apt update
+apt install nano -y
+
+cd ../../etc/janus/
+
+https = yes
+secure_port = 8089
+cert_pem = "/usr/local/share/ca-certificates/mycert.pem"
+cert_key = "/usr/local/share/ca-certificates/mycert.key"
+
+docker run -d --name coturn `
+  -p 3478:3478 -p 3478:3478/udp `
+  -p 49152-49252:49152-49252/udp `
+  instrumentisto/coturn `
+  -n --lt-cred-mech --user=user:pass --realm=localhost
+
+
+public ip get
+Invoke-RestMethod -Uri "https://api.ipify.org"
+45.120.115.50
+https://45.120.115.50:8080/video-meet
+
+netsh advfirewall firewall add rule name="Janus RTP" dir=in action=allow protocol=UDP localport=10000-20000
+
+netsh advfirewall firewall add rule name="Janus RTP" dir=in action=allow protocol=UDP localport=20000-40000
+
+web-socke check
+npm install -g wscat
+wscat -c ws://localhost:8188/
+
+https://192.168.90.122:8089/janus
+
+
+
+
+Open config with vi or nano (may need to install nano):
+
+vi /usr/local/etc/janus/janus.jcfg
+
+
+Edit [admin] section:
+
+[admin]
+enabled = yes
+http_port = 7088
+
+
+Save and exit.
+
+Restart container:
+
+docker restart janus
+
+
+✅ Pros: Direct edit
+❌ Cons: Changes are lost if container is deleted (not persistent)
+
+4️⃣ Check changes
+
+After enabling Admin API:
+
+curl http://localhost:7088/admin
+
+
+Should return JSON like:
+
+
+
+
+jibri
+
+cat /usr/local/etc/janus/janus.jcfg | grep ws
+// netstat install
+apt update && apt install -y net-tools
+netstat -tlnp | grep 8188
+
+PowerShell:
+Test-NetConnection -ComputerName localhost -Port 8188
+
+
+wscat -c ws://localhost:8188/janus `
+  -H "Origin: http://localhost" `
+  -H "Sec-WebSocket-Protocol: janus-protocol"
+
+
+keytool -genkeypair -alias mycert -keyalg RSA -storetype PKCS12 -keysize 2048 -keystore keystore.p12 -validity 3650keytool -genkeypair -alias mycert -keyalg RSA -storetype PKCS12 -keysize 2048 -keystore keystore.p12 -validity 3650
