@@ -9,11 +9,58 @@ spring:
   banner:
     charset: UTF-8
     location: banner.txt
-server:
-  port: 8443
-  ssl:
+
+
+  ## MULTIPART (MultipartProperties)
+  servlet:
+    multipart:
+      enabled: true # Enable multipart uploads
+      max-file-size: 100MB   # Max file size.
+      max-request-size: 100MB   # Max Request Size
+
+  ## JACKSON BINDING CONFIG
+  jackson:
+    serialization:
+      fail-on-empty-beans: off
+    default-property-inclusion: non_null
+
+#JWT
+application:
+  security:
+    jwt:
+      secret-key: 586B633834416E396M7436753879382F423F4428482B4C6250655367566B5970
+      expiration: 86400000 # 1 day 86400000
+      cookie-name: jwt-cookie
+      refresh-token:
+        expiration: 604800000 # 7 day
+        cookie-name: refresh-jwt-cookie
+
+#SWAGGER CONFIG
+springdoc:
+  api-docs:
     enabled: true
-    key-store: classpath:keystore.p12
-    key-store-password: changeit
-    key-store-type: PKCS12
-    key-alias: mycert
+  swagger-ui:
+    enabled: true
+    tryItOutEnabled: true
+    operationsSorter: method
+    tagsSorter: alpha
+    filter: true
+    doc-expansion: none
+
+#Actuator
+management:
+  endpoint:
+    health:
+      show-details: always
+    web:
+      base-path: /actuator
+
+
+logging:
+  level:
+    root: INFO
+    org.springframework.web: DEBUG
+    com.ticonsys.online_meet: TRACE
+
+spring-boot-version: "3.5.6"
+password-reset-token-minutes: 30

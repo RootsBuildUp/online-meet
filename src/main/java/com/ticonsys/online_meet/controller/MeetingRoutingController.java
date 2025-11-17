@@ -5,7 +5,7 @@ import org.springframework.ui.Model;
 import org.springframework.web.bind.annotation.GetMapping;
 
 @Controller
-public class MeetingController {
+public class MeetingRoutingController {
 
     @GetMapping("/video-meet")
     public String meet(Model model) {

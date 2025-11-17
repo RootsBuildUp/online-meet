@@ -1,5 +1,42 @@
 server:
-  port: 8080
+  port: 8443
+  ssl:
+    enabled: true
+    key-store: classpath:keystore.p12
+    key-store-password: changeit
+    key-store-type: PKCS12
+    key-alias: mycert
+
+spring:
+  # ===============================
+  # DATASOURCE (PostgreSQL + HikariCP)
+  # ===============================
+  datasource:
+    url: jdbc:postgresql://localhost:5432/postgres
+    username: postgres
+    password: 123456
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      pool-name: HikariPool-1
+      minimum-idle: 5
+      maximum-pool-size: 15
+      idle-timeout: 30000       # 30 seconds
+      connection-timeout: 20000 # 20 seconds
+      max-lifetime: 600000      # 10 minutes
+      auto-commit: true
+
+  # ===============================
+  # JPA / HIBERNATE CONFIG
+  # ===============================
+  jpa:
+    show-sql: true
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+    open-in-view: false
 
 janus:
   url: localhost

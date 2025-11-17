@@ -1,6 +1,6 @@
 package com.ticonsys.online_meet.model.user;
 
-import com.square.emp.util.DateTimeUtil;
+import com.ticonsys.online_meet.utils.DateTimeUtil;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.NoArgsConstructor;
